@@ -12,6 +12,7 @@ from FastSpeech import FastSpeech
 from loss import FastSpeechLoss
 from data_utils import FastSpeechDataset, collate_fn, DataLoader
 from optimizer import ScheduledOptim
+from alignment import get_alignment, get_tacotron2
 import hparams as hp
 
 
@@ -21,9 +22,10 @@ def main(args):
 
     # Define model
     model = nn.DataParallel(FastSpeech()).to(device)
-    print("Model Has Been Defined")
-    print('Number of FastSpeech Parameters:', sum(param.numel()
-                                                  for param in model.parameters()))
+    tacotron2 = get_tacotron2()
+    print("FastSpeech and Tacotron2 Have Been Defined")
+    num_param = sum(param.numel() for param in model.parameters())
+    print('Number of FastSpeech Parameters:', num_param)
 
     # Get dataset
     dataset = FastSpeechDataset()
@@ -38,8 +40,12 @@ def main(args):
 
     # Get training loader
     print("Get Training Loader")
-    training_loader = DataLoader(dataset, batch_size=hp.batch_size, shuffle=True,
-                                 collate_fn=collate_fn, drop_last=True, num_workers=cpu_count())
+    training_loader = DataLoader(dataset,
+                                 batch_size=hp.batch_size,
+                                 shuffle=True,
+                                 collate_fn=collate_fn,
+                                 drop_last=True,
+                                 num_workers=cpu_count())
 
     try:
         checkpoint = torch.load(os.path.join(
@@ -72,31 +78,41 @@ def main(args):
                 epoch * len(training_loader) + 1
 
             # Init
-            # optimizer.zero_grad()
             scheduled_optim.zero_grad()
 
-            # Prepare Data
-            src_seq = data_of_batch["texts"]
-            src_pos = data_of_batch["pos"]
-            mel_tgt = data_of_batch["mels"]
-            alignment_target = data_of_batch["alignment"]
+            if not hp.pre_target:
+                # Prepare Data
+                src_seq = data_of_batch["texts"]
+                src_pos = data_of_batch["pos"]
+                mel_tgt = data_of_batch["mels"]
 
-            src_seq = torch.from_numpy(src_seq).long().to(device)
-            src_pos = torch.from_numpy(src_pos).long().to(device)
-            mel_tgt = torch.from_numpy(mel_tgt).float().to(device)
-            alignment_target = alignment_target.to(device)
+                src_seq = torch.from_numpy(src_seq).long().to(device)
+                src_pos = torch.from_numpy(src_pos).long().to(device)
+                mel_tgt = torch.from_numpy(mel_tgt).float().to(device)
+                alignment_target = get_alignment(
+                    src_seq, tacotron2).float().to(device)
+                # For Data Parallel
+                mel_max_len = mel_tgt.size(1)
+            else:
+                # Prepare Data
+                src_seq = data_of_batch["texts"]
+                src_pos = data_of_batch["pos"]
+                mel_tgt = data_of_batch["mels"]
+                alignment_target = data_of_batch["alignment"]
+
+                src_seq = torch.from_numpy(src_seq).long().to(device)
+                src_pos = torch.from_numpy(src_pos).long().to(device)
+                mel_tgt = torch.from_numpy(mel_tgt).float().to(device)
+                alignment_target = torch.from_numpy(
+                    alignment_target).float().to(device)
+                # For Data Parallel
+                mel_max_len = mel_tgt.size(1)
 
             # Forward
             mel_output, mel_output_postnet, duration_predictor_output = model(
-                src_seq, src_pos, alignment_target)
-
-            # print(mel_output.size())
-            # print(mel_output_postnet.size())
-            # print(mel_tgt.size())
-            # print()
-            # print(duration_predictor_output.size())
-            # print(alignment_target.size())
-            # print(duration_predictor_output)
+                src_seq, src_pos,
+                mel_max_length=mel_max_len,
+                length_target=alignment_target)
 
             # Cal Loss
             mel_loss, mel_postnet_loss, duration_predictor_loss = fastspeech_loss(
@@ -128,7 +144,6 @@ def main(args):
             nn.utils.clip_grad_norm_(model.parameters(), hp.grad_clip_thresh)
 
             # Update weights
-            # optimizer.step()
             scheduled_optim.step_and_update_lr()
 
             # Print
@@ -161,9 +176,6 @@ def main(args):
                 )}, os.path.join(hp.checkpoint_path, 'checkpoint_%d.pth.tar' % current_step))
                 print("save model at step %d ..." % current_step)
 
-            # if current_step in hp.decay_step:
-            #     optimizer = adjust_learning_rate(optimizer, current_step)
-
             end_time = time.clock()
             Time = np.append(Time, end_time - start_time)
             if len(Time) == hp.clear_Time:
@@ -171,22 +183,6 @@ def main(args):
                 Time = np.delete(
                     Time, [i for i in range(len(Time))], axis=None)
                 Time = np.append(Time, temp_value)
-
-
-# def adjust_learning_rate(optimizer, step):
-#     if step == hp.decay_step[0]:
-#         for param_group in optimizer.param_groups:
-#             param_group['lr'] = 0.0005
-
-#     elif step == hp.decay_step[1]:
-#         for param_group in optimizer.param_groups:
-#             param_group['lr'] = 0.0003
-
-#     elif step == hp.decay_step[2]:
-#         for param_group in optimizer.param_groups:
-#             param_group['lr'] = 0.0001
-
-#     return optimizer
 
 
 if __name__ == "__main__":
