@@ -10,7 +10,8 @@ The Implementation of FastSpeech Based on Pytorch.
 - [FastSpeech Reading Notes](https://zhuanlan.zhihu.com/p/67325775)
 - [Details and Rethinking of this Implementation](https://zhuanlan.zhihu.com/p/67939482)
 
-## Train
+## Start
+### Before Training
 1. Download and extract [LJSpeech dataset](https://keithito.com/LJ-Speech-Dataset/).
 2. Put LJSpeech dataset in `data`.
 3. Run `preprocess.py`.
@@ -19,12 +20,13 @@ The Implementation of FastSpeech Based on Pytorch.
 6. Put the pre-trained Tacotron2 model in `Tacotron2/pre_trained_model`
 7. Run `alignment.py`, it will take 7 hours on NVIDIA RTX2080ti.
 8. Change `pre_target = True` in `hparam.py`.
-9. Run `train.py`.
-10. This Implementation supports data-parallel now.
-11. The tacotron2 outputs of mel spectrogram and alignment are shown as follow:
-<div align="center">
-<img src="img/tacotron2_outputs.jpg">
-</div>
+
+### Training
+#### Normal Mode
+Run `train.py`.
+
+#### Turbo Mode
+Run `train_accelerated.py`.
 
 ## Dependencies
 - python 3.6
@@ -48,6 +50,7 @@ import torch
 test_target = torch.stack([torch.Tensor([0, 2, 3, 0, 3, 2, 1, 0, 0, 0]),
                            torch.Tensor([1, 2, 3, 2, 2, 0, 3, 6, 3, 5])])
 ```
+- In the turbo mode, `prefetcher` prefetches training data and this operation may cost more memory.
 - The output of LengthRegulator's last linear layer passes through the ReLU activation function in order to remove negative values. It is the outputs of this module. During the inference, the output of LengthRegulator pass through `torch.exp()` and subtract one, as the multiple for expanding encoder output. During the training stage, duration targets add one and pass through `torch.log()` and then calculate loss.
 - For example:
 ```python
@@ -57,6 +60,11 @@ duration_predictor_target = torch.log(duration_predictor_target)
 duration_predictor_output = torch.exp(duration_predictor_output)
 duration_predictor_output = duration_predictor_output - 1
 ```
+- This Implementation supports data-parallel now.
+- The tacotron2 outputs of mel spectrogram and alignment are shown as follow:
+<div align="center">
+<img src="img/tacotron2_outputs.jpg">
+</div>
 
 ## Reference
 - [The Implementation of Tacotron Based on Tensorflow](https://github.com/keithito/tacotron)
